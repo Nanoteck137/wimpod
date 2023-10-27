@@ -256,7 +256,6 @@ fn print_success(format: PrintFormat) {
 
 fn main() {
     let args = Args::parse();
-    eprintln!("Args: {:#?}", args);
 
     let server = Server::new(args.base_url);
 
