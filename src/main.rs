@@ -32,6 +32,11 @@ enum Commands {
     CreateNamespace {
         name: String,
     },
+
+    Fork {
+        from: String,
+        to: String,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -102,17 +107,17 @@ impl Server {
         Some(())
     }
 
-    fn fork_namespace(&self, from: &str, to: &str) -> Option<()> {
+    fn fork_namespace(&self, from: &str, to: &str) -> Result<(), ServerError> {
         let url =
             format!("{}/v1/namespaces/{}/fork/{}", self.base_url, from, to);
-        let res = self.client.post(url).send().ok()?;
+        let res = self.client.post(url).send().unwrap();
 
         if !res.status().is_success() {
-            println!("Res: {:#?}", res.json::<serde_json::Value>());
-            return None;
+            let error = res.json::<ServerError>().unwrap();
+            return Err(error);
         }
 
-        Some(())
+        Ok(())
     }
 
     fn namespace_stats(&self, namespace: &str) -> Option<NamespaceStats> {
@@ -232,6 +237,19 @@ fn print_server_error(err: ServerError, format: PrintFormat) {
     std::process::exit(-1);
 }
 
+fn write_success(format: PrintFormat) {
+    match format {
+        PrintFormat::Normal => {
+            println!("Success");
+        },
+        PrintFormat::Json => {
+            let j = serde_json::to_string_pretty(&json!({ "success": true }))
+                .expect("Failed to convert result to json");
+            write_str(&j);
+        }
+    }
+}
+
 fn main() {
     let args = Args::parse();
     eprintln!("Args: {:#?}", args);
@@ -265,25 +283,33 @@ fn main() {
                     write_str(&j);
                 }
 
-                Err(err) => print_server_error(err, args.format),
+                Err(e) => print_server_error(e, args.format),
+            }
+        }
+
+        Commands::Fork { from, to } => {
+            match server.fork_namespace(&from, &to) {
+                Ok(_) => {
+                    write_success(args.format);
+                }
+
+                Err(e) => print_server_error(e, args.format),
             }
         }
     }
 
-    return;
-
-    let stats = server.namespace_stats("db1");
-    println!("{:#?}", stats);
-
-    let mut config = server.get_namespace_config("db1").unwrap();
-    println!("Config: {:#?}", config);
-
-    config.max_db_size = Some("500.0 PB".to_string());
-
-    server.set_namespace_config("db1", &config);
-
-    let config = server.get_namespace_config("db1").unwrap();
-    println!("Config: {:#?}", config);
+    // let stats = server.namespace_stats("db1");
+    // println!("{:#?}", stats);
+    //
+    // let mut config = server.get_namespace_config("db1").unwrap();
+    // println!("Config: {:#?}", config);
+    //
+    // config.max_db_size = Some("500.0 PB".to_string());
+    //
+    // server.set_namespace_config("db1", &config);
+    //
+    // let config = server.get_namespace_config("db1").unwrap();
+    // println!("Config: {:#?}", config);
 
     // server.fork_namespace("db1", "db3");
     // server.delete_namespace("db3");
