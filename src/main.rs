@@ -296,21 +296,4 @@ fn main() {
             }
         }
     }
-
-    // let stats = server.namespace_stats("db1");
-    // println!("{:#?}", stats);
-    //
-    // let mut config = server.get_namespace_config("db1").unwrap();
-    // println!("Config: {:#?}", config);
-    //
-    // config.max_db_size = Some("500.0 PB".to_string());
-    //
-    // server.set_namespace_config("db1", &config);
-    //
-    // let config = server.get_namespace_config("db1").unwrap();
-    // println!("Config: {:#?}", config);
-
-    // server.fork_namespace("db1", "db3");
-    // server.delete_namespace("db3");
-    // server.create_namespace("db3");
 }
