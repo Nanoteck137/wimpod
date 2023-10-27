@@ -5,7 +5,7 @@ use std::io::Write;
 
 #[derive(Clone, ValueEnum, Debug)]
 enum PrintFormat {
-    Console,
+    Normal,
     Json,
 }
 
@@ -14,7 +14,7 @@ enum PrintFormat {
 struct Args {
     base_url: String,
 
-    #[arg(value_enum, long, short, default_value_t = PrintFormat::Console)]
+    #[arg(value_enum, long, short, default_value_t = PrintFormat::Normal)]
     format: PrintFormat,
 
     #[command(subcommand)]
@@ -27,6 +27,10 @@ enum Commands {
         namespace: String,
         #[arg(long, short)]
         include_top_queries: bool,
+    },
+
+    CreateNamespace {
+        name: String,
     },
 }
 
@@ -60,6 +64,11 @@ struct Server {
     client: reqwest::blocking::Client,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+struct ServerError {
+    error: String,
+}
+
 impl Server {
     fn new(base_url: String) -> Self {
         Self {
@@ -68,17 +77,17 @@ impl Server {
         }
     }
 
-    fn create_namespace(&self, namespace: &str) -> Option<()> {
+    fn create_namespace(&self, namespace: &str) -> Result<(), ServerError> {
         let url =
             format!("{}/v1/namespaces/{}/create", self.base_url, namespace);
-        let res = self.client.post(url).json(&json!({})).send().ok()?;
+        let res = self.client.post(url).json(&json!({})).send().unwrap();
 
         if !res.status().is_success() {
-            println!("Res: {:#?}", res.json::<serde_json::Value>());
-            return None;
+            let error = res.json::<ServerError>().unwrap();
+            return Err(error);
         }
 
-        Some(())
+        Ok(())
     }
 
     fn delete_namespace(&self, namespace: &str) -> Option<()> {
@@ -162,6 +171,67 @@ impl Server {
     // .route("/v1/diagnostics", get(handle_diagnostics))
 }
 
+fn print_stats(stats: &NamespaceStats, format: PrintFormat) {
+    match format {
+        PrintFormat::Normal => {
+            println!("Rows Read: {}", stats.rows_read_count);
+            println!("Rows Written: {}", stats.rows_written_count);
+            println!("Storage Used (B): {}", stats.storage_bytes_used);
+            println!(
+                "Write Requests Delegated: {}",
+                stats.write_requests_delegated
+            );
+            println!("Replication Index: {}", stats.replication_index);
+            if !stats.top_queries.is_empty() {
+                println!("Top Queries (RR = Rows Read : RW = Rows Written):");
+                for (i, query) in stats.top_queries.iter().enumerate() {
+                    println!(
+                        "{}: RR: {} RW: {} Query: {}",
+                        i, query.rows_read, query.rows_written, query.query
+                    );
+                }
+            }
+        }
+
+        PrintFormat::Json => {
+            let j = serde_json::to_string_pretty(
+                &json!({ "success": true, "stats": &stats }),
+            )
+            .expect("Failed to convert stats to json");
+            write_str(&j);
+        }
+    }
+}
+
+fn write_str(s: &str) {
+    let stdout = std::io::stdout();
+    let mut lock = stdout.lock();
+
+    // NOTE(patrik): Just exit when an error occurs because
+    // I got a problem with broken pipes when piping to an
+    // program that doesn't exist
+    if let Err(_) = writeln!(lock, "{}", s) {
+        std::process::exit(0);
+    }
+}
+
+fn print_server_error(err: ServerError, format: PrintFormat) {
+    match format {
+        PrintFormat::Normal => {
+            eprintln!("Error: {}", err.error);
+        }
+
+        PrintFormat::Json => {
+            let j = serde_json::to_string_pretty(&err)
+                .expect("Failed to convert err to json");
+
+            write_str(&j);
+        }
+    }
+
+    std::process::exit(-1);
+}
+
 fn main() {
     let args = Args::parse();
     eprintln!("Args: {:#?}", args);
@@ -176,49 +246,26 @@ fn main() {
             let mut stats = server
                 .namespace_stats(&namespace)
                 .expect("Failed to retrive namespace stats");
-            match args.format {
-                PrintFormat::Console => {
-                    println!("Rows Read: {}", stats.rows_read_count);
-                    println!("Rows Written: {}", stats.rows_written_count);
-                    println!("Storage Used (B): {}", stats.storage_bytes_used);
-                    println!(
-                        "Write Requests Delegated: {}",
-                        stats.write_requests_delegated
-                    );
-                    println!("Replication Index: {}", stats.replication_index);
-                    if include_top_queries {
-                        println!("Top Queries (RR = Rows Read : RW = Rows Written):");
-                        for (i, query) in stats.top_queries.iter().enumerate()
-                        {
-                            println!(
-                                "{}: RR: {} RW: {} Query: {}",
-                                i,
-                                query.rows_read,
-                                query.rows_written,
-                                query.query
-                            );
-                        }
-                    }
+
+            if !include_top_queries {
+                stats.top_queries.clear();
+            }
+
+            print_stats(&stats, args.format);
+        }
+
+        Commands::CreateNamespace { name } => {
+            let res = server.create_namespace(&name);
+            match res {
+                Ok(_) => {
+                    let j = serde_json::to_string_pretty(
+                        &json!({ "success": true }),
+                    )
+                    .expect("Failed to convert result to json");
+                    write_str(&j);
                 }
 
-                PrintFormat::Json => {
-                    if !include_top_queries {
-                        stats.top_queries.clear()
-                    }
-
-                    let j = serde_json::to_string_pretty(&stats)
-                        .expect("Failed to convert stats to json");
-
-                    let stdout = std::io::stdout();
-                    let mut lock = stdout.lock();
-
-                    // NOTE(patrik): Just exit when an error occurs because 
-                    // I got a problem with broken pipes when piping to an 
-                    // program that doesn't exist
-                    if let Err(_) = writeln!(lock, "{}", j) {
-                        std::process::exit(0);
-                    }
-                }
+                Err(err) => print_server_error(err, args.format),
             }
         }
     }
