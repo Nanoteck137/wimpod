@@ -33,6 +33,10 @@ enum Commands {
         name: String,
     },
 
+    DeleteNamespace {
+        name: String,
+    },
+
     Fork {
         from: String,
         to: String,
@@ -95,16 +99,16 @@ impl Server {
         Ok(())
     }
 
-    fn delete_namespace(&self, namespace: &str) -> Option<()> {
+    fn delete_namespace(&self, namespace: &str) -> Result<(), ServerError> {
         let url = format!("{}/v1/namespaces/{}", self.base_url, namespace);
-        let res = self.client.delete(url).send().ok()?;
+        let res = self.client.delete(url).send().unwrap();
 
         if !res.status().is_success() {
-            println!("Res: {:#?}", res.json::<serde_json::Value>());
-            return None;
+            let error = res.json::<ServerError>().unwrap();
+            return Err(error);
         }
 
-        Some(())
+        Ok(())
     }
 
     fn fork_namespace(&self, from: &str, to: &str) -> Result<(), ServerError> {
@@ -237,7 +241,7 @@ fn print_server_error(err: ServerError, format: PrintFormat) {
     std::process::exit(-1);
 }
 
-fn write_success(format: PrintFormat) {
+fn print_success(format: PrintFormat) {
     match format {
         PrintFormat::Normal => {
             println!("Success");
@@ -287,12 +291,16 @@ fn main() {
             }
         }
 
+        Commands::DeleteNamespace { name } => {
+            match server.delete_namespace(&name) {
+                Ok(_) => print_success(args.format),
+                Err(e) => print_server_error(e, args.format),
+            }
+        }
+
         Commands::Fork { from, to } => {
             match server.fork_namespace(&from, &to) {
-                Ok(_) => {
-                    write_success(args.format);
-                }
-
+                Ok(_) => print_success(args.format),
                 Err(e) => print_server_error(e, args.format),
             }
         }
