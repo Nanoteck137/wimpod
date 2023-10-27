@@ -277,16 +277,8 @@ fn main() {
         }
 
         Commands::CreateNamespace { name } => {
-            let res = server.create_namespace(&name);
-            match res {
-                Ok(_) => {
-                    let j = serde_json::to_string_pretty(
-                        &json!({ "success": true }),
-                    )
-                    .expect("Failed to convert result to json");
-                    write_str(&j);
-                }
-
+            match server.create_namespace(&name) {
+                Ok(_) => print_success(args.format),
                 Err(e) => print_server_error(e, args.format),
             }
         }
