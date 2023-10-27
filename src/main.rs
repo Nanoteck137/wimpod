@@ -1,5 +1,34 @@
+use clap::{Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::io::Write;
+
+#[derive(Clone, ValueEnum, Debug)]
+enum PrintFormat {
+    Console,
+    Json,
+}
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    base_url: String,
+
+    #[arg(value_enum, long, short, default_value_t = PrintFormat::Console)]
+    format: PrintFormat,
+
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    Stats {
+        namespace: String,
+        #[arg(long, short)]
+        include_top_queries: bool,
+    },
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 struct TopQuery {
@@ -25,7 +54,6 @@ struct Config {
     block_reason: Option<String>,
     max_db_size: Option<String>,
 }
-
 
 struct Server {
     base_url: String,
@@ -109,7 +137,11 @@ impl Server {
         Some(res)
     }
 
-    fn set_namespace_config(&self, namespace: &str, config: &Config) -> Option<()> {
+    fn set_namespace_config(
+        &self,
+        namespace: &str,
+        config: &Config,
+    ) -> Option<()> {
         let url =
             format!("{}/v1/namespaces/{}/config", self.base_url, namespace);
         let res = self.client.post(url).json(config).send().ok()?;
@@ -122,16 +154,77 @@ impl Server {
         None
     }
 
-        // .route(
-        //     "/v1/namespaces/:namespace/config",
-        //     get(handle_get_config).post(handle_post_config),
-        // )
-        //
-        // .route("/v1/diagnostics", get(handle_diagnostics))
+    // .route(
+    //     "/v1/namespaces/:namespace/config",
+    //     get(handle_get_config).post(handle_post_config),
+    // )
+    //
+    // .route("/v1/diagnostics", get(handle_diagnostics))
 }
 
 fn main() {
-    let server = Server::new("http://127.0.0.1:8081".to_string());
+    let args = Args::parse();
+    eprintln!("Args: {:#?}", args);
+
+    let server = Server::new(args.base_url);
+
+    match args.command {
+        Commands::Stats {
+            namespace,
+            include_top_queries,
+        } => {
+            let mut stats = server
+                .namespace_stats(&namespace)
+                .expect("Failed to retrive namespace stats");
+            match args.format {
+                PrintFormat::Console => {
+                    println!("Rows Read: {}", stats.rows_read_count);
+                    println!("Rows Written: {}", stats.rows_written_count);
+                    println!("Storage Used (B): {}", stats.storage_bytes_used);
+                    println!(
+                        "Write Requests Delegated: {}",
+                        stats.write_requests_delegated
+                    );
+                    println!("Replication Index: {}", stats.replication_index);
+                    if include_top_queries {
+                        println!("Top Queries (RR = Rows Read : RW = Rows Written):");
+                        for (i, query) in stats.top_queries.iter().enumerate()
+                        {
+                            println!(
+                                "{}: RR: {} RW: {} Query: {}",
+                                i,
+                                query.rows_read,
+                                query.rows_written,
+                                query.query
+                            );
+                        }
+                    }
+                }
+
+                PrintFormat::Json => {
+                    if !include_top_queries {
+                        stats.top_queries.clear()
+                    }
+
+                    let j = serde_json::to_string_pretty(&stats)
+                        .expect("Failed to convert stats to json");
+
+                    let stdout = std::io::stdout();
+                    let mut lock = stdout.lock();
+
+                    // NOTE(patrik): Just exit when an error occurs because 
+                    // I got a problem with broken pipes when piping to an 
+                    // program that doesn't exist
+                    if let Err(_) = writeln!(lock, "{}", j) {
+                        std::process::exit(0);
+                    }
+                }
+            }
+        }
+    }
+
+    return;
+
     let stats = server.namespace_stats("db1");
     println!("{:#?}", stats);
 
