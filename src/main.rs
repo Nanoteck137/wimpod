@@ -23,6 +23,8 @@ struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    List {},
+
     Stats {
         namespace: String,
         #[arg(long, short)]
@@ -172,6 +174,20 @@ impl Server {
         None
     }
 
+    fn get_all_namespaces(&self) -> Result<Vec<String>, ServerError> {
+        let url = format!("{}/v1/namespaces", self.base_url);
+        let res = self.client.get(url).send().unwrap();
+
+        if !res.status().is_success() {
+            let error = res.json::<ServerError>().unwrap();
+            return Err(error);
+        }
+
+        let namespaces = res.json::<Vec<String>>().unwrap();
+
+        Ok(namespaces)
+    }
+
     // .route(
     //     "/v1/namespaces/:namespace/config",
     //     get(handle_get_config).post(handle_post_config),
@@ -245,7 +261,7 @@ fn print_success(format: PrintFormat) {
     match format {
         PrintFormat::Normal => {
             println!("Success");
-        },
+        }
         PrintFormat::Json => {
             let j = serde_json::to_string_pretty(&json!({ "success": true }))
                 .expect("Failed to convert result to json");
@@ -260,6 +276,25 @@ fn main() {
     let server = Server::new(args.base_url);
 
     match args.command {
+        Commands::List {} => match server.get_all_namespaces() {
+            Ok(namespaces) => match args.format {
+                PrintFormat::Normal => {
+                    println!("Namespaces:");
+                    for namespace in namespaces {
+                        println!(" - {}", namespace);
+                    }
+                }
+                PrintFormat::Json => {
+                    let j = serde_json::to_string_pretty(
+                        &json!({ "success": true, "namespaces": namespaces }),
+                    )
+                    .expect("Failed to convert result to json");
+                    write_str(&j);
+                }
+            },
+            Err(_) => todo!(),
+        },
+
         Commands::Stats {
             namespace,
             include_top_queries,
