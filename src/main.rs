@@ -292,7 +292,7 @@ fn main() {
                     write_str(&j);
                 }
             },
-            Err(_) => todo!(),
+            Err(e) => print_server_error(e, args.format),
         },
 
         Commands::Stats {
